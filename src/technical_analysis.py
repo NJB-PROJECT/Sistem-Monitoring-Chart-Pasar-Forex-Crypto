@@ -98,10 +98,10 @@ def compute_all(df: pd.DataFrame) -> dict:
     price      = latest["close"]
     sma20      = latest["sma20"]
     sma50      = latest["sma50"]
-    rsi_val    = latest["rsi"]
-    macd_val   = latest["macd"]
-    macd_sig   = latest["macd_signal"]
-    atr_val    = latest["atr"]
+    rsi_val    = latest["rsi"] if not pd.isna(latest["rsi"]) else 50
+    macd_val   = latest["macd"] if not pd.isna(latest["macd"]) else 0
+    macd_sig   = latest["macd_signal"] if not pd.isna(latest["macd_signal"]) else 0
+    atr_val    = latest["atr"] if not pd.isna(latest["atr"]) else 0
 
     if pd.isna(sma20) or pd.isna(sma50):
         trend = "SIDEWAYS"
@@ -115,13 +115,13 @@ def compute_all(df: pd.DataFrame) -> dict:
     # Trend strength 0-100
     score = 0
     if trend == "BULLISH":
-        if price > sma20:  score += 25
-        if sma20  > sma50: score += 25
+        if not pd.isna(sma20) and price > sma20:  score += 25
+        if not pd.isna(sma20) and not pd.isna(sma50) and sma20  > sma50: score += 25
         if macd_val > macd_sig: score += 25
         if rsi_val > 50:   score += 25
     elif trend == "BEARISH":
-        if price < sma20:  score += 25
-        if sma20  < sma50: score += 25
+        if not pd.isna(sma20) and price < sma20:  score += 25
+        if not pd.isna(sma20) and not pd.isna(sma50) and sma20  < sma50: score += 25
         if macd_val < macd_sig: score += 25
         if rsi_val < 50:   score += 25
 
