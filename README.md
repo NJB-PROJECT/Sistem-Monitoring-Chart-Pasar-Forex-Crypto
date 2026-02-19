@@ -50,7 +50,7 @@
 
 ### 1. Clone the repository
 ```bash
-git clone https://github.com/YOUR_USERNAME/advanced-trading-analyzer.git
+git clone https://github.com/NJB-PROJECT/Sistem-Monitoring-Chart-Pasar-Forex-Crypto
 cd advanced-trading-analyzer
 ```
 
