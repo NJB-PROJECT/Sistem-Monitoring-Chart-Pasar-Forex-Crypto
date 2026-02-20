@@ -211,6 +211,16 @@ with st.sidebar:
             st_autorefresh(interval=refresh_rate * 1000, key="candle_refresh")
             st.info(f"Refreshing every {default_interval}s")
 
+    # Strategy Mode
+    st.markdown("### 🎯 Signal Strategy")
+    strategy_mode = st.radio(
+        "Precision Mode",
+        ["Standard", "High Precision (Strict)"],
+        index=0,
+        help="High Precision filters for stronger trends and clearer patterns (fewer signals, higher win-rate potential)."
+    )
+    strict_mode = (strategy_mode == "High Precision (Strict)")
+
     # Indicator Params
     with st.expander("⚙️ Technical Settings", expanded=False):
         rsi_period = st.slider("RSI Period", 7, 21, 14)
@@ -260,7 +270,7 @@ try:
         patterns = get_recent_patterns(ta["df"])
 
         # Generate Recommendations
-        recs = generate_recommendations(ta, patterns, symbol)
+        recs = generate_recommendations(ta, patterns, symbol, strict_mode=strict_mode)
 
         # Get Real-time Price (if possible)
         price_info = get_current_price(symbol)
