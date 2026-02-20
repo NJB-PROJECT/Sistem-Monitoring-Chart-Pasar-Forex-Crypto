@@ -4,7 +4,6 @@ Generates Buy / Sell / Hold recommendations from technical signals.
 """
 import pandas as pd
 import numpy as np
-from datetime import datetime
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from config.settings import RSI_OVERSOLD, RSI_OVERBOUGHT, PRIORITY_ICONS
@@ -17,11 +16,16 @@ def _fmt(price: float, symbol: str) -> str:
     return f"{price:.5f}" if price < 10 else f"{price:.2f}"
 
 
-def generate_recommendations(ta: dict, patterns: list, symbol: str) -> list:
+def generate_recommendations(ta: dict, patterns: list, symbol: str, strict_mode: bool = False) -> list:
     """
     Build a prioritized list of trading recommendations.
-    Each recommendation is a dict:
-        action, priority, area, reason, target, sl, confidence
+
+    Args:
+        strict_mode (bool): If True, applies stricter filters for higher accuracy (High Precision Mode).
+                            - RSI must be more extreme (<25 / >75)
+                            - Trend Score > 75 required for trend trades
+                            - Pattern confirmation required for reversals
+                            - Only HIGH priority signals shown
     """
     recs  = []
     price = ta["price"]
@@ -39,207 +43,222 @@ def generate_recommendations(ta: dict, patterns: list, symbol: str) -> list:
     macd       = ta["macd"]
     macd_sig   = ta["macd_signal"]
     sma20      = ta["sma20"]
-    sma50      = ta["sma50"]
     ts         = ta["trend_score"]
 
+    # --- Strict Mode Settings ---
+    rsi_buy_thresh = 25 if strict_mode else RSI_OVERSOLD
+    rsi_sell_thresh = 75 if strict_mode else RSI_OVERBOUGHT
+    trend_min_score = 75 if strict_mode else 50
+    has_bullish_pattern = any(p["type"] == "bullish" and p["strength"] >= 3 for p in patterns)
+    has_bearish_pattern = any(p["type"] == "bearish" and p["strength"] >= 3 for p in patterns)
+
     # ── RSI Oversold → BUY ───────────────────────────────────────────────────
-    if rsi_signal == "OVERSOLD":
-        entry = price
-        tp    = round(bb_mid or (price + 2 * atr), 5)
-        sl    = round(price - 1.5 * atr, 5)
-        recs.append({
-            "action":     "BUY",
-            "priority":   "HIGH",
-            "area":       _fmt(entry, symbol),
-            "reason":     f"RSI oversold ({rsi_val:.1f}) — strong reversal signal",
-            "target":     _fmt(tp, symbol),
-            "sl":         _fmt(sl, symbol),
-            "confidence": 78,
-        })
+    if rsi_val <= rsi_buy_thresh:
+        # Strict Mode check: Must have bullish pattern OR very extreme RSI (<20)
+        if not strict_mode or (strict_mode and (has_bullish_pattern or rsi_val < 20)):
+            entry = price
+            tp    = round(bb_mid or (price + 2 * atr), 5)
+            sl    = round(price - 1.5 * atr, 5)
+            conf  = 85 if (strict_mode and has_bullish_pattern) else 78
+            recs.append({
+                "action":     "BUY",
+                "priority":   "HIGH",
+                "area":       _fmt(entry, symbol),
+                "reason":     f"RSI oversold ({rsi_val:.1f}) {'+ Bullish Pattern' if has_bullish_pattern else ''} — Strong Reversal",
+                "target":     _fmt(tp, symbol),
+                "sl":         _fmt(sl, symbol),
+                "confidence": conf,
+            })
 
     # ── RSI Overbought → SELL ────────────────────────────────────────────────
-    if rsi_signal == "OVERBOUGHT":
-        entry = price
-        tp    = round(bb_mid or (price - 2 * atr), 5)
-        sl    = round(price + 1.5 * atr, 5)
-        recs.append({
-            "action":     "SELL",
-            "priority":   "HIGH",
-            "area":       _fmt(entry, symbol),
-            "reason":     f"RSI overbought ({rsi_val:.1f}) — bearish exhaustion",
-            "target":     _fmt(tp, symbol),
-            "sl":         _fmt(sl, symbol),
-            "confidence": 75,
-        })
+    if rsi_val >= rsi_sell_thresh:
+        # Strict Mode check: Must have bearish pattern OR very extreme RSI (>80)
+        if not strict_mode or (strict_mode and (has_bearish_pattern or rsi_val > 80)):
+            entry = price
+            tp    = round(bb_mid or (price - 2 * atr), 5)
+            sl    = round(price + 1.5 * atr, 5)
+            conf  = 85 if (strict_mode and has_bearish_pattern) else 75
+            recs.append({
+                "action":     "SELL",
+                "priority":   "HIGH",
+                "area":       _fmt(entry, symbol),
+                "reason":     f"RSI overbought ({rsi_val:.1f}) {'+ Bearish Pattern' if has_bearish_pattern else ''} — Bearish Exhaustion",
+                "target":     _fmt(tp, symbol),
+                "sl":         _fmt(sl, symbol),
+                "confidence": conf,
+            })
 
     # ── Price at BB Lower Band → BUY ─────────────────────────────────────────
     if bb_signal == "BELOW_LOWER" and trend != "BEARISH":
-        entry = price
-        tp    = round(bb_mid, 5)
-        sl    = round(price - atr, 5)
-        recs.append({
-            "action":     "BUY",
-            "priority":   "MEDIUM",
-            "area":       _fmt(entry, symbol),
-            "reason":     f"Price below Bollinger Lower Band — mean reversion expected",
-            "target":     _fmt(tp, symbol),
-            "sl":         _fmt(sl, symbol),
-            "confidence": 65,
-        })
+        if not strict_mode or (strict_mode and has_bullish_pattern):
+            entry = price
+            tp    = round(bb_mid, 5)
+            sl    = round(price - atr, 5)
+            recs.append({
+                "action":     "BUY",
+                "priority":   "MEDIUM" if not strict_mode else "HIGH",
+                "area":       _fmt(entry, symbol),
+                "reason":     f"Price below Bollinger Lower Band — Mean Reversion",
+                "target":     _fmt(tp, symbol),
+                "sl":         _fmt(sl, symbol),
+                "confidence": 65 + (10 if has_bullish_pattern else 0),
+            })
 
     # ── Price at BB Upper Band → SELL ────────────────────────────────────────
     if bb_signal == "ABOVE_UPPER" and trend != "BULLISH":
-        entry = price
-        tp    = round(bb_mid, 5)
-        sl    = round(price + atr, 5)
-        recs.append({
-            "action":     "SELL",
-            "priority":   "MEDIUM",
-            "area":       _fmt(entry, symbol),
-            "reason":     f"Price above Bollinger Upper Band — overbought zone",
-            "target":     _fmt(tp, symbol),
-            "sl":         _fmt(sl, symbol),
-            "confidence": 63,
-        })
+        if not strict_mode or (strict_mode and has_bearish_pattern):
+            entry = price
+            tp    = round(bb_mid, 5)
+            sl    = round(price + atr, 5)
+            recs.append({
+                "action":     "SELL",
+                "priority":   "MEDIUM" if not strict_mode else "HIGH",
+                "area":       _fmt(entry, symbol),
+                "reason":     f"Price above Bollinger Upper Band — Overbought Zone",
+                "target":     _fmt(tp, symbol),
+                "sl":         _fmt(sl, symbol),
+                "confidence": 63 + (10 if has_bearish_pattern else 0),
+            })
 
-    # ── MACD Crossover ───────────────────────────────────────────────────────
+    # ── MACD Crossover (Trend Following) ─────────────────────────────────────
     if macd > macd_sig and ta["macd_hist"] > 0:
-        entry = price
-        tp    = round(price + 2 * atr, 5)
-        sl    = round(price - 1.2 * atr, 5)
-        p     = "HIGH" if ts >= 75 else "MEDIUM"
-        recs.append({
-            "action":     "BUY",
-            "priority":   p,
-            "area":       _fmt(entry, symbol),
-            "reason":     "MACD bullish crossover confirmed",
-            "target":     _fmt(tp, symbol),
-            "sl":         _fmt(sl, symbol),
-            "confidence": 60 + (ts // 5),
-        })
+        if ts >= trend_min_score:
+            entry = price
+            tp    = round(price + 2.5 * atr, 5)
+            sl    = round(price - 1.5 * atr, 5)
+            p     = "HIGH" if ts >= 80 else "MEDIUM"
+            recs.append({
+                "action":     "BUY",
+                "priority":   p,
+                "area":       _fmt(entry, symbol),
+                "reason":     f"MACD Bullish Crossover + Strong Trend ({ts}/100)",
+                "target":     _fmt(tp, symbol),
+                "sl":         _fmt(sl, symbol),
+                "confidence": 60 + (ts // 4),
+            })
     elif macd < macd_sig and ta["macd_hist"] < 0:
-        entry = price
-        tp    = round(price - 2 * atr, 5)
-        sl    = round(price + 1.2 * atr, 5)
-        p     = "HIGH" if ts >= 75 else "MEDIUM"
-        recs.append({
-            "action":     "SELL",
-            "priority":   p,
-            "area":       _fmt(entry, symbol),
-            "reason":     "MACD bearish crossover confirmed",
-            "target":     _fmt(tp, symbol),
-            "sl":         _fmt(sl, symbol),
-            "confidence": 60 + (ts // 5),
-        })
+        if ts >= trend_min_score:
+            entry = price
+            tp    = round(price - 2.5 * atr, 5)
+            sl    = round(price + 1.5 * atr, 5)
+            p     = "HIGH" if ts >= 80 else "MEDIUM"
+            recs.append({
+                "action":     "SELL",
+                "priority":   p,
+                "area":       _fmt(entry, symbol),
+                "reason":     f"MACD Bearish Crossover + Strong Trend ({ts}/100)",
+                "target":     _fmt(tp, symbol),
+                "sl":         _fmt(sl, symbol),
+                "confidence": 60 + (ts // 4),
+            })
 
     # ── Trend Hold Recommendations ────────────────────────────────────────────
-    if trend == "BULLISH" and ts >= 50:
+    # In strict mode, we prioritize entries over holds, but if trend is SUPER strong (>85), we show HOLD.
+    if trend == "BULLISH" and ts >= trend_min_score:
         tp = resistances[-1] if resistances else round(price + 3 * atr, 5)
         recs.append({
             "action":     "HOLD BUY",
-            "priority":   "MEDIUM" if ts < 75 else "HIGH",
+            "priority":   "MEDIUM" if ts < 80 else "HIGH",
             "area":       _fmt(price, symbol),
-            "reason":     f"Bullish trend kuat (skor {ts}/100) — ride the trend",
+            "reason":     f"Strong Bullish Trend ({ts}/100) — Ride the Trend",
             "target":     _fmt(tp, symbol),
             "sl":         _fmt(round(sma20 - atr, 5) if sma20 else round(price - 2*atr, 5), symbol),
             "confidence": 55 + ts // 5,
         })
-    elif trend == "BEARISH" and ts >= 50:
+    elif trend == "BEARISH" and ts >= trend_min_score:
         tp = supports[0] if supports else round(price - 3 * atr, 5)
         recs.append({
             "action":     "HOLD SELL",
-            "priority":   "MEDIUM" if ts < 75 else "HIGH",
+            "priority":   "MEDIUM" if ts < 80 else "HIGH",
             "area":       _fmt(price, symbol),
-            "reason":     f"Bearish trend kuat (skor {ts}/100) — ikuti momentum turun",
+            "reason":     f"Strong Bearish Trend ({ts}/100) — Follow Downside Momentum",
             "target":     _fmt(tp, symbol),
             "sl":         _fmt(round(sma20 + atr, 5) if sma20 else round(price + 2*atr, 5), symbol),
             "confidence": 55 + ts // 5,
         })
 
-    # ── Support Bounce ────────────────────────────────────────────────────────
+    # ── Support/Resistance Rejection (Counter-Trend) ─────────────────────────
+    # Only in Standard Mode or if Pattern Confirmed in Strict Mode
     if supports:
         nearest_sup = min(supports, key=lambda s: abs(s - price))
         if abs(nearest_sup - price) / price < 0.005:
-            tp = round(price + 3 * atr, 5)
-            sl = round(nearest_sup - atr, 5)
-            recs.append({
-                "action":     "BUY",
-                "priority":   "MEDIUM",
-                "area":       _fmt(nearest_sup, symbol),
-                "reason":     f"Harga mendekati support kunci {_fmt(nearest_sup, symbol)}",
-                "target":     _fmt(tp, symbol),
-                "sl":         _fmt(sl, symbol),
-                "confidence": 62,
-            })
+            if not strict_mode or (strict_mode and has_bullish_pattern):
+                tp = round(price + 3 * atr, 5)
+                sl = round(nearest_sup - atr, 5)
+                recs.append({
+                    "action":     "BUY",
+                    "priority":   "MEDIUM",
+                    "area":       _fmt(nearest_sup, symbol),
+                    "reason":     f"Price bouncing off Key Support {_fmt(nearest_sup, symbol)}",
+                    "target":     _fmt(tp, symbol),
+                    "sl":         _fmt(sl, symbol),
+                    "confidence": 62 + (10 if has_bullish_pattern else 0),
+                })
 
-    # ── Resistance Rejection ─────────────────────────────────────────────────
     if resistances:
         nearest_res = min(resistances, key=lambda r: abs(r - price))
         if abs(nearest_res - price) / price < 0.005:
-            tp = round(price - 3 * atr, 5)
-            sl = round(nearest_res + atr, 5)
-            recs.append({
-                "action":     "SELL",
-                "priority":   "MEDIUM",
-                "area":       _fmt(nearest_res, symbol),
-                "reason":     f"Harga mendekati resistance kunci {_fmt(nearest_res, symbol)}",
-                "target":     _fmt(tp, symbol),
-                "sl":         _fmt(sl, symbol),
-                "confidence": 60,
-            })
+            if not strict_mode or (strict_mode and has_bearish_pattern):
+                tp = round(price - 3 * atr, 5)
+                sl = round(nearest_res + atr, 5)
+                recs.append({
+                    "action":     "SELL",
+                    "priority":   "MEDIUM",
+                    "area":       _fmt(nearest_res, symbol),
+                    "reason":     f"Price rejecting Key Resistance {_fmt(nearest_res, symbol)}",
+                    "target":     _fmt(tp, symbol),
+                    "sl":         _fmt(sl, symbol),
+                    "confidence": 60 + (10 if has_bearish_pattern else 0),
+                })
 
-    # ── Pattern-Based Recommendations ────────────────────────────────────────
-    for p in patterns[:2]:
-        if p["type"] == "bullish":
-            tp = round(price + 2.5 * atr, 5)
-            sl = round(price - 1.5 * atr, 5)
-            recs.append({
-                "action":     "BUY",
-                "priority":   "MEDIUM" if p["strength"] < 4 else "HIGH",
-                "area":       _fmt(price, symbol),
-                "reason":     f"Pattern '{p['name']}' terdeteksi — {p['desc']}",
-                "target":     _fmt(tp, symbol),
-                "sl":         _fmt(sl, symbol),
-                "confidence": 50 + p["strength"] * 5,
-            })
-        elif p["type"] == "bearish":
-            tp = round(price - 2.5 * atr, 5)
-            sl = round(price + 1.5 * atr, 5)
-            recs.append({
-                "action":     "SELL",
-                "priority":   "MEDIUM" if p["strength"] < 4 else "HIGH",
-                "area":       _fmt(price, symbol),
-                "reason":     f"Pattern '{p['name']}' terdeteksi — {p['desc']}",
-                "target":     _fmt(tp, symbol),
-                "sl":         _fmt(sl, symbol),
-                "confidence": 50 + p["strength"] * 5,
-            })
+    # ── Pattern-Based Only (If no other signal) ──────────────────────────────
+    for p in patterns[:1]: # Check only strongest pattern
+        if p["strength"] >= 4: # Strong patterns (Engulfing, Morning/Evening Star)
+            target_conf = 50 + p["strength"] * 5
 
-    # Deduplicate & sort by priority → confidence
+            if p["type"] == "bullish":
+                if not strict_mode or (strict_mode and rsi_val < 45): # Filter bad pattern signals
+                    tp = round(price + 2.5 * atr, 5)
+                    sl = round(price - 1.5 * atr, 5)
+                    recs.append({
+                        "action":     "BUY",
+                        "priority":   "HIGH",
+                        "area":       _fmt(price, symbol),
+                        "reason":     f"Strong Pattern '{p['name']}' Detected",
+                        "target":     _fmt(tp, symbol),
+                        "sl":         _fmt(sl, symbol),
+                        "confidence": target_conf,
+                    })
+            elif p["type"] == "bearish":
+                if not strict_mode or (strict_mode and rsi_val > 55):
+                    tp = round(price - 2.5 * atr, 5)
+                    sl = round(price + 1.5 * atr, 5)
+                    recs.append({
+                        "action":     "SELL",
+                        "priority":   "HIGH",
+                        "area":       _fmt(price, symbol),
+                        "reason":     f"Strong Pattern '{p['name']}' Detected",
+                        "target":     _fmt(tp, symbol),
+                        "sl":         _fmt(sl, symbol),
+                        "confidence": target_conf,
+                    })
+
+    # Deduplicate & Sort
     priority_order = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
     seen   = set()
     unique = []
+
+    # Filter for Strict Mode: Only show HIGH priority or Confidence > 70
+    final_recs = []
     for r in recs:
         key = (r["action"], r["priority"])
         if key not in seen:
             seen.add(key)
-            unique.append(r)
+            if strict_mode:
+                if r["priority"] == "HIGH" or r["confidence"] >= 75:
+                    final_recs.append(r)
+            else:
+                final_recs.append(r)
 
-    unique.sort(key=lambda x: (priority_order[x["priority"]], -x["confidence"]))
-    return unique[:6]  # return top-6
-
-
-def format_recommendation_text(rec: dict, symbol: str) -> str:
-    """Format a recommendation into a human-readable Indonesian string."""
-    icon = PRIORITY_ICONS[rec["priority"]]
-    action_map = {
-        "BUY":       "🟢 Lebih baik BUY",
-        "SELL":      "🔴 Lebih baik SELL",
-        "HOLD BUY":  "🔵 Lebih baik HOLD BUY anda",
-        "HOLD SELL": "🔵 Lebih baik HOLD SELL anda",
-    }
-    verb = action_map.get(rec["action"], rec["action"])
-    return (
-        f"{icon} {verb} di area **{rec['area']}** — {rec['reason']} | "
-        f"TP: {rec['target']} | SL: {rec['sl']} | Confidence: {rec['confidence']}%"
-    )
+    final_recs.sort(key=lambda x: (priority_order[x["priority"]], -x["confidence"]))
+    return final_recs[:5]

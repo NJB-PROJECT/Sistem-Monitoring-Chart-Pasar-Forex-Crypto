@@ -62,7 +62,12 @@ def _fetch_twelvedata(symbol: str, timeframe: str, api_key: str) -> pd.DataFrame
     df = df.set_index("datetime").sort_index()
     for col in ["open", "high", "low", "close"]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
-    df["volume"] = pd.to_numeric(df.get("volume", 0), errors="coerce").fillna(0)
+
+    if "volume" in df.columns:
+        df["volume"] = pd.to_numeric(df["volume"], errors="coerce").fillna(0)
+    else:
+        df["volume"] = 0
+
     return df[["open", "high", "low", "close", "volume"]].dropna(subset=["close"])
 
 
@@ -244,7 +249,7 @@ def get_current_price(symbol: str) -> dict:
     keys   = load_api_keys()
     td_key = keys.get("twelvedata", "").strip()
 
-    # Twelvedata real-time price
+    # Twelvedata real-time price (Preferred for minimal delay)
     if td_key:
         try:
             td_sym = SYMBOLS_TWELVEDATA.get(symbol)
@@ -286,7 +291,7 @@ def get_current_price(symbol: str) -> dict:
             "change_pct": round((change / prev * 100) if prev else 0, 3),
             "high_24h":   round(info.day_high or 0, 5),
             "low_24h":    round(info.day_low  or 0, 5),
-            "volume":     int(info.three_month_average_volume or 0),
+            "volume":     int(info.three_month_average_volume or 0) if info.three_month_average_volume is not None else 0,
             "source":     "yfinance",
         }
     except Exception:
