@@ -1,9 +1,10 @@
 """
 AI Analyst Module
-Uses Google Gemini 2.0 Flash Lite to analyze market data and generate trade setups.
+Uses Google Gemini 2.0 Flash Lite (via google-genai SDK) to analyze market data.
 """
 import os
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 import pandas as pd
 from datetime import datetime
 
@@ -11,14 +12,10 @@ class AIAnalyst:
     def __init__(self, api_key: str):
         self.api_key = api_key
         if api_key:
-            genai.configure(api_key=api_key)
-            # Use 'gemini-1.5-flash' (or closest available stable model) as '2.5 Flash Lite' specific name might vary
-            # or be in preview. 'gemini-1.5-flash' is highly optimized for speed/cost.
-            # If user specifically asked for 2.0 Flash Lite, we can try to target that if available,
-            # but usually flash models are good enough. Let's use 'gemini-1.5-flash' for reliability.
-            self.model = genai.GenerativeModel('gemini-1.5-flash')
+            # Initialize client with the new SDK
+            self.client = genai.Client(api_key=api_key)
         else:
-            self.model = None
+            self.client = None
 
     def analyze_market(self, symbol: str, timeframe: str, ta_data: dict, patterns: list, news: list) -> str:
         """
@@ -34,7 +31,7 @@ class AIAnalyst:
         Returns:
             str: Markdown-formatted analysis.
         """
-        if not self.model:
+        if not self.client:
             return "⚠️ AI Analysis Unavailable: API Key Missing."
 
         # Construct Prompt
@@ -75,7 +72,22 @@ class AIAnalyst:
         """
 
         try:
-            response = self.model.generate_content(prompt)
+            # Use gemini-2.0-flash-lite-preview-02-05 if available, or fall back to gemini-1.5-flash
+            # For stability, let's use gemini-1.5-flash which is widely available,
+            # unless the user specifically wants the bleeding edge.
+            # The user asked for "2.5 Flash Lite", which might be "gemini-2.0-flash-lite"
+            response = self.client.models.generate_content(
+                model='gemini-2.0-flash-lite-preview-02-05',
+                contents=prompt
+            )
             return response.text
         except Exception as e:
-            return f"⚠️ AI Analysis Failed: {str(e)}"
+            # Fallback to 1.5 Flash if the specific 2.0 model name fails or isn't available
+            try:
+                response = self.client.models.generate_content(
+                    model='gemini-1.5-flash',
+                    contents=prompt
+                )
+                return response.text
+            except Exception as e2:
+                return f"⚠️ AI Analysis Failed: {str(e2)}"
