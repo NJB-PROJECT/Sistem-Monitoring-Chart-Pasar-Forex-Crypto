@@ -244,7 +244,7 @@ def get_current_price(symbol: str) -> dict:
     keys   = load_api_keys()
     td_key = keys.get("twelvedata", "").strip()
 
-    # Twelvedata real-time price
+    # Twelvedata real-time price (Preferred for minimal delay)
     if td_key:
         try:
             td_sym = SYMBOLS_TWELVEDATA.get(symbol)

@@ -2,6 +2,7 @@
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║        ADVANCED TRADING ANALYZER  —  Professional Edition  v3.0             ║
 ║        Python · Streamlit · Plotly · yfinance · Twelvedata · AlphaVantage   ║
+║        + Google Gemini AI Analyst                                           ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 """
 
@@ -24,6 +25,7 @@ from src.pattern_detection     import get_recent_patterns
 from src.recommendation_engine import generate_recommendations
 from src.news_analyzer         import get_news_and_events
 from src.chart_builder         import build_main_chart
+from src.ai_analyst            import AIAnalyst
 
 # ────────────────────────────────────────────────────────────────────────────
 #  PAGE CONFIG & CSS
@@ -175,6 +177,8 @@ if "data_cache" not in st.session_state:
     st.session_state.data_cache = {}
 if "active_provider" not in st.session_state:
     st.session_state.active_provider = "auto"
+if "gemini_response" not in st.session_state:
+    st.session_state.gemini_response = None
 
 # ────────────────────────────────────────────────────────────────────────────
 #  SIDEBAR SETTINGS
@@ -233,11 +237,13 @@ with st.sidebar:
         keys = load_api_keys()
         td_key = st.text_input("Twelvedata Key", value=keys.get("twelvedata", ""), type="password")
         av_key = st.text_input("Alpha Vantage Key", value=keys.get("alpha_vantage", ""), type="password")
+        gemini_key = st.text_input("Google Gemini API", value=keys.get("gemini_api", ""), type="password")
 
         if st.button("Save Keys"):
             save_api_keys({
                 "twelvedata": td_key,
                 "alpha_vantage": av_key,
+                "gemini_api": gemini_key,
                 "active_provider": "twelvedata" if td_key else "auto"
             })
             st.success("Keys Saved!")
@@ -251,9 +257,6 @@ with st.sidebar:
 # ────────────────────────────────────────────────────────────────────────────
 @st.cache_data(ttl=refresh_rate if enable_refresh else 3600, show_spinner=False)
 def get_market_data(sym, tf):
-    # This wrapper allows us to cache the heavy lifting but invalidate based on refresh_rate
-    # Actually, st_autorefresh triggers a rerun, so we need to be careful with caching.
-    # We will use session_state for caching within the run, but fetch fresh if needed.
     df, provider = fetch_ohlcv(sym, tf)
     return df, provider
 
@@ -362,7 +365,9 @@ with c4:
     """, unsafe_allow_html=True)
 
 # Tabs for Main Content
-tab_chart, tab_signals, tab_analysis, tab_news = st.tabs(["📊 Live Chart", "⚡ AI Signals", "🔍 Technical Analysis", "📰 News & Events"])
+tab_chart, tab_ai, tab_signals, tab_analysis, tab_news = st.tabs([
+    "📊 Live Chart", "🤖 AI Analyst", "⚡ Signals", "🔍 Technicals", "📰 News"
+])
 
 # ─── TAB 1: CHART ───────────────────────────────────────────────────────────
 with tab_chart:
@@ -385,12 +390,50 @@ with tab_chart:
                 </div>
                 """, unsafe_allow_html=True)
 
-# ─── TAB 2: SIGNALS ─────────────────────────────────────────────────────────
+# ─── TAB 2: AI ANALYST ──────────────────────────────────────────────────────
+with tab_ai:
+    st.markdown("### 🤖 Google Gemini Market Analysis")
+    gemini_key = load_api_keys().get("gemini_api")
+
+    if not gemini_key:
+        st.warning("⚠️ Google Gemini API Key is missing. Please add it in the Sidebar > API Keys.")
+    else:
+        col_ai_btn, col_ai_res = st.columns([1, 4])
+        with col_ai_btn:
+            if st.button("✨ Generate AI Analysis", use_container_width=True):
+                with st.spinner("🤖 AI is reading the charts..."):
+                    analyst = AIAnalyst(gemini_key)
+                    # Prepare data for AI
+                    ta_summary = {
+                        "price": current_price,
+                        "trend": trend,
+                        "trend_score": score,
+                        "rsi": rsi, "rsi_signal": rsi_sig,
+                        "macd": ta["macd"], "macd_signal": ta["macd_signal"], "macd_hist": ta["macd_hist"],
+                        "bb_upper": ta["bb_upper"], "bb_lower": ta["bb_lower"], "bb_signal": ta["bb_signal"],
+                        "atr": ta["atr"],
+                        "supports": ta["supports"], "resistances": ta["resistances"]
+                    }
+                    st.session_state.gemini_response = analyst.analyze_market(
+                        symbol, timeframe, ta_summary, patterns, news
+                    )
+
+        with col_ai_res:
+            if st.session_state.gemini_response:
+                st.markdown(f"""
+                <div style="background:#161B22;border:1px solid #30363D;border-radius:12px;padding:20px;line-height:1.6">
+                    {st.session_state.gemini_response}
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.info("Click 'Generate AI Analysis' to get insights from Gemini 2.0 Flash Lite.")
+
+# ─── TAB 3: SIGNALS ─────────────────────────────────────────────────────────
 with tab_signals:
     c_sig, c_info = st.columns([2, 1])
 
     with c_sig:
-        st.markdown("### 🤖 AI Trading Recommendations")
+        st.markdown("### ⚡ Algorithmic Recommendations")
         if not recs:
             st.info("No strong signals detected at the moment. Market might be ranging or undecided.")
         else:
@@ -425,7 +468,7 @@ with tab_signals:
         **Note:** Always verify signals with your own analysis.
         """)
 
-# ─── TAB 3: ANALYSIS ────────────────────────────────────────────────────────
+# ─── TAB 4: ANALYSIS ────────────────────────────────────────────────────────
 with tab_analysis:
     c_ta1, c_ta2 = st.columns(2)
 
@@ -484,7 +527,7 @@ with tab_analysis:
             with sup_cols[i]:
                 st.metric(f"Support {i+1}", f"{s:.5f}")
 
-# ─── TAB 4: NEWS ────────────────────────────────────────────────────────────
+# ─── TAB 5: NEWS ────────────────────────────────────────────────────────────
 with tab_news:
     cn1, cn2 = st.columns([1.5, 1])
     with cn1:

@@ -1,5 +1,6 @@
 {
   "twelvedata": "e51267ecb4834605b222393de4c2ae2b",
   "alpha_vantage": "XZLEREJGO3A0D775",
-  "active_provider": "auto"
+  "active_provider": "twelvedata",
+  "gemini_api": "AIzaSyDAsCL6MyJktWnJ7nmGW2KvJ9AqPI9P2Dw"
 }
